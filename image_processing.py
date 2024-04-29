@@ -11,13 +11,30 @@ def noise_reduction(bin_im):
     element = cv2.getStructuringElement(cv2.MORPH_RECT, (6, 6))
     bin_im = cv2.morphologyEx(bin_im, cv2.MORPH_OPEN, element, iterations=1)
     return bin_im
+    
+def Object_connection(bin_im):
+    element = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    element_dva = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    binar = cv2.erode(bin_im,  element, iterations=1)
+    bin_im = cv2.dilate(binar,  element_dva, iterations=1)
+    return bin_im
+    
 
-def transform_nir(nir):
-    n, m = nir.shape
-    nir_resized = cv2.resize(nir, (m - 6, n - 6))
-    ret_nir = np.zeros((n, m), np.uint8)
-    ret_nir[3:-3, 3:-3] = nir_resized
-    return ret_nir
+#def transform_to_nir(rgb, nir):
+    # Extract dimensions of the input RGB and NIR images
+    n_rgb, m_rgb, _ = rgb.shape
+    n_nir, m_nir = nir.shape
+    
+    # Resize the RGB image to match the size of the NIR image
+    rgb_resized = cv2.resize(rgb, (m_nir, n_nir))
+    
+    # Create a new array to hold the transformed RGB image
+    ret_rgb = np.zeros((n_nir, m_nir, 3), dtype=np.uint8)
+    
+    # Copy the resized RGB image into the transformed RGB array
+    ret_rgb[:n_nir, :m_nir] = rgb_resized
+    
+    return ret_rgb
 
 
 def get_norm_colors(im):
@@ -49,12 +66,7 @@ def pavel_method(im_color, nir):
     g = g.astype(float)
     r = r.astype(float)
     nir = nir.astype(float)
-    # Processing formula: (2xNIR + Green - Red - Blue + 510)/4
-    # processed_im = (1 * nir + g - r - b +510) /4
-    processed_im = (((2 * nir + g - r - b) / (2 * nir + g + r + b + 510) - 0.05) * 1.8 + 1) * 128.0
-    # processed_im = cv2.convertScaleAbs(processed_im)
-    # processed_im = (processed_im - processed_im.min())/(processed_im.max() - processed_im.min()) * 255
-    # processed_im = (processed_im - 90) / (170 - 90) * 255
+    processed_im = (((nir + g - 1.2 * r - 0.5 * b) / (nir + g + 1.2 * r + 0.5 * b + 64) * 1.13) + 1) * 127
     return processed_im.astype(np.uint8)
 
 
@@ -183,4 +195,5 @@ if __name__ == "__main__":
         test_excess_green(args.path)
     if args.com:
         test_combination(args.path)
+
         

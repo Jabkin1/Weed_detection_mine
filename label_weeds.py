@@ -1,9 +1,14 @@
+"""
+Basic tool for weed labeling, output images in Pascal VOC fomat, compatible with labelImg 1.8.6 (2021-10-10).
+"""
+
 import os
 import cv2
 import numpy as np
 import xml.etree.ElementTree as ET
+import xml.dom.minidom
 
-from image_processing import transform_nir, get_ndvi_im, get_excess_green, get_com_im, noise_reduction, pavel_method
+from image_processing import get_ndvi_im, get_excess_green, get_com_im, noise_reduction, pavel_method, Object_connection
 
 class LabelWeeds:
     def __init__(self, path, out, label_names):
@@ -31,7 +36,24 @@ class LabelWeeds:
                             color=color, thickness=1)
             cv2.rectangle(im_to_show, (x, y), (x + w, y + h), color, 1)
         return im_to_show
-
+    
+    #@staticmethod
+    def make_object_element(self, bbox, label, dom):
+        x, y, w, h = bbox[:4]  # Unpack the values correctly
+        object_elem = ET.Element("object")
+        name_elem = ET.SubElement(object_elem, "name")
+        name_elem.text = label  # Use the provided label argument
+        bndbox_elem = ET.SubElement(object_elem, "bndbox")
+        xmin_elem = ET.SubElement(bndbox_elem, "xmin")
+        xmin_elem.text = str(x)
+        ymin_elem = ET.SubElement(bndbox_elem, "ymin")
+        ymin_elem.text = str(y)
+        xmax_elem = ET.SubElement(bndbox_elem, "xmax")
+        xmax_elem.text = str(x + w)
+        ymax_elem = ET.SubElement(bndbox_elem, "ymax")
+        ymax_elem.text = str(y + h)
+        return object_elem
+   
     def make_hist_im(self, gray):
         bin_w = 2
         hist_h = 400
@@ -51,27 +73,32 @@ class LabelWeeds:
         nir_path = self.data[color_path]["nir"]
         im_color = cv2.imread(color_path)
 
+        # Read the NIR image
         im_nir = cv2.imread(nir_path, cv2.IMREAD_GRAYSCALE)
-        nir = transform_nir(im_nir)
+        
         if method == "pavel":
-            gray = pavel_method(im_color, nir)
+            gray = pavel_method(im_color, im_nir)
         elif method == "ndvi":
-            gray = get_ndvi_im(im_color, nir)
+            gray = get_ndvi_im(im_color, im_nir)
         elif method == "exg":
             gray = get_excess_green(im_color)
         elif method == "com":
-            ndvi = get_ndvi_im(im_color, nir)
+            ndvi = get_ndvi_im(im_color, im_nir)
             exg = get_excess_green(im_color)
             gray = get_com_im(exg, ndvi)
         else:
             assert False, f"unknown method: {method}"
+
+        # Optionally, perform additional image processing steps (e.g., blur, histogram equalization)
         # gray = cv2.medianBlur(gray, 5)
         # gray = cv2.equalizeHist(gray)
+
         hist_im = self.make_hist_im(gray)
         return gray, hist_im
 
     def save_data_voc(self):
         for image_name, image_data in self.data.items():
+            xml_path = os.path.join(self.out_dir, f"{os.path.splitext(os.path.basename(image_name))[0]}.xml")
             root_elem = ET.Element("annotation")
 
             filename_elem = ET.SubElement(root_elem, "filename")
@@ -81,29 +108,14 @@ class LabelWeeds:
             for bbox in bbox_list:
                 label = bbox[4]
                 if label:
-                    object_elem = self.make_object_element(bbox[:4], label)
+                    object_elem = self.make_object_element(bbox[:4], label, root_elem)
                     root_elem.append(object_elem)
 
-            tree = ET.ElementTree(root_elem)
-            xml_path = os.path.join(self.out_dir, f"{os.path.splitext(os.path.basename(image_name))[0]}.xml")
-            tree.write(xml_path, encoding="utf-8", xml_declaration=True)
+            # Use minidom to prettify the XML
+            xml_str = xml.dom.minidom.parseString(ET.tostring(root_elem)).toprettyxml(indent="  ", newl="\n")
+            with open(xml_path, "wb") as xml_file:
+                xml_file.write(xml_str.encode("utf-8"))
 
-    @staticmethod
-    def make_object_element(bbox, label):
-        x, y, w, h = bbox
-        object_elem = ET.Element("object")
-        name_elem = ET.SubElement(object_elem, "name")
-        name_elem.text = label
-        bndbox_elem = ET.SubElement(object_elem, "bndbox")
-        xmin_elem = ET.SubElement(bndbox_elem, "xmin")
-        xmin_elem.text = str(x)
-        ymin_elem = ET.SubElement(bndbox_elem, "ymin")
-        ymin_elem.text = str(y)
-        xmax_elem = ET.SubElement(bndbox_elem, "xmax")
-        xmax_elem.text = str(x + w)
-        ymax_elem = ET.SubElement(bndbox_elem, "ymax")
-        ymax_elem.text = str(y + h)
-        return object_elem        
 
     def add_images(self):
         assert os.path.isdir(self.path)
@@ -116,10 +128,32 @@ class LabelWeeds:
                     if not color_path in self.data:
                         self.data[color_path] = {"nir": nir_path}
 
+    def update_directory(self):
+        # Iterate through all XML files in the directory
+        for filename in os.listdir(self.path):
+            if filename.endswith(".xml") and "rgb" in filename:
+                xml_path = os.path.join(self.path, filename)
+
+                tree = ET.parse(xml_path)
+                root = tree.getroot()
+
+                # Update filename in the XML
+                filename_element = root.find('filename')
+                filename_element.text = filename.replace("rgb", "nir")
+
+                # Update file extension in the XML
+                filename_element.text = filename_element.text.replace('.xml', '.tiff')
+
+                # Save the modified XML
+                new_xml_path = os.path.join(self.path, filename.replace("rgb", "nir"))
+                tree.write(new_xml_path)
+
+
     def get_bbox(self, gray):
         assert gray is not None
         ret, binary_im = cv2.threshold(gray, self.thrvalue, 255, cv2.THRESH_BINARY)
-        # binary_im = noise_reduction(binary_im)
+        #binary_im = noise_reduction(binary_im)
+        binary_im = Object_connection(binary_im)
         contours, hierarchy = cv2.findContours(binary_im, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         bbox_list = []
         for cnt in contours:
@@ -307,6 +341,8 @@ class LabelWeeds:
                 self.data[im_name]["thrvalue"] = self.thrvalue
             elif k == ord("s"):
                 self.save_data_voc()
+            elif k == ord("x"):
+                self.update_directory()                     
             elif k == ord("["):  # switch to the previous label
                 self.switch_label(-1)
             elif k == ord("]"):  # switch to the next label
@@ -324,11 +360,17 @@ class LabelWeeds:
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description='__doc__')
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('path', help='Path to image directory.')
-    parser.add_argument('--out', help='Specify an output directory for annotations.', required=True)
-    parser.add_argument('--labels', nargs='+', help='List of label names.')
+    parser.add_argument('--out', help='Specify an output directory for annotations. If not provided, it defaults to the path.', default=None)
+    parser.add_argument('--labels', nargs='+', help='List of label names it is a required parameter.', required=True)
 
     args = parser.parse_args()
+
+    # Set the default value for --out argument
+    if args.out is None:
+        args.out = args.path
+
     label = LabelWeeds(path=args.path, out=args.out, label_names=args.labels)
     label.run()
+
