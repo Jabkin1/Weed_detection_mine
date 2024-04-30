@@ -13,8 +13,8 @@ def noise_reduction(bin_im):
     return bin_im
     
 def Object_connection(bin_im):
-    element = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    element_dva = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    element = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
+    element_dva = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     binar = cv2.erode(bin_im,  element, iterations=1)
     bin_im = cv2.dilate(binar,  element_dva, iterations=1)
     return bin_im
@@ -66,7 +66,7 @@ def pavel_method(im_color, nir):
     g = g.astype(float)
     r = r.astype(float)
     nir = nir.astype(float)
-    processed_im = (((nir + g - 1.2 * r - 0.5 * b) / (nir + g + 1.2 * r + 0.5 * b + 64) * 1.13) + 1) * 127
+    processed_im = (((nir + g -  r -  b) / (nir + g + r +  b + 127) * 1.23) + 1) * 127
     return processed_im.astype(np.uint8)
 
 

@@ -157,7 +157,7 @@ class LabelWeeds:
         contours, hierarchy = cv2.findContours(binary_im, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         bbox_list = []
         for cnt in contours:
-            if cv2.contourArea(cnt) > 80:
+            if cv2.contourArea(cnt) > 100:
                 x, y, w, h = cv2.boundingRect(cnt)
                 bbox_list.append([x, y, w, h, None])
         return bbox_list
