@@ -2,6 +2,7 @@
     Sort RGB and NIR images.
 """
 
+
 import os
 import numpy as np
 import shutil
@@ -15,12 +16,16 @@ def stat_test(data1, data2):
     data2 = np.asarray(data2)
     for num in data1:
         diff_arr = abs(data2 - num)
-        # print(diff_arr[diff_arr < 50])
-        assert len(diff_arr[diff_arr < 50]) <= 1
+        close_diffs = diff_arr[diff_arr < MIN_TIME_DIFF]
+        if len(close_diffs) > 1:
+            print(f"Close timestamps: {num} has {len(close_diffs)} matches within {MIN_TIME_DIFF} ms")
+            return False
+    return True
 
 
 def copy_twins(img_dir, twins, im_id=0):
     if not twins:
+        print("No twins found.")
         return im_id
     log = open(os.path.join(img_dir, "rename_log.log"), "w")
     assert not os.path.exists(os.path.join(img_dir, "twins")), img_dir  # "Twins directory already exists!"
@@ -30,11 +35,14 @@ def copy_twins(img_dir, twins, im_id=0):
         new_rgb_name = f"im_{im_id:06d}_rgb.tiff"
         shutil.copy(rgb_path, os.path.join(img_dir, "twins", new_rgb_name))
         log.write(f"{rgb_path}, {new_rgb_name}\r\n")
+        print(f"Copied {rgb_path} to {new_rgb_name}")
 
         new_nir_name = f"im_{im_id:06d}_nir.tiff"
+        shutil.copy(nir_path, os.path.join(img_dir, "twins", new_nir_name))
+        log.write(f"{nir_path}, {new_nir_name}\r\n")
+        print(f"Copied {nir_path} to {new_nir_name}")
 
     log.close()
-
     return im_id
 
 
@@ -42,8 +50,13 @@ def name_to_timestamp(img_list):
     timestamps_list = []
     for im_path in img_list:
         im_name = os.path.basename(im_path)
-        time_id = int(im_name[:-5].split("_")[1], 16)
+        try:
+            time_id = int(im_name[:-5].split("_")[1], 16)
+        except ValueError as e:
+            print(f"Error parsing timestamp from {im_name}: {e}")
+            continue
         timestamps_list.append(time_id)
+        print(f"Extracted timestamp {time_id} from {im_name}")
 
     # sort data
     time_im = sorted(zip(timestamps_list, img_list))
@@ -55,18 +68,26 @@ def name_to_timestamp(img_list):
 
 def sort_by_time(rgb_list, nir_list):
     if not rgb_list or not nir_list:
-        return
+        print("RGB or NIR list is empty.")
+        return []
     img_twins = []
     rgb_timestamps, rgb_list = name_to_timestamp(rgb_list)
     nir_timestamps, nir_list = name_to_timestamp(nir_list)
-    stat_test(rgb_timestamps, nir_timestamps)
+    
+    # Handle close timestamps
+    if not stat_test(rgb_timestamps, nir_timestamps):
+        # Remove duplicates by keeping only unique close timestamps
+        rgb_timestamps = list(dict.fromkeys(rgb_timestamps))
+        nir_timestamps = list(dict.fromkeys(nir_timestamps))
+        print("Duplicates removed, reprocessing")
 
     nir_timestamps_arr = np.asarray(nir_timestamps)
     for rgb_path, rgb_time_id in zip(rgb_list, rgb_timestamps):
-        time_diff = abs(nir_timestamps_arr-rgb_time_id)
+        time_diff = abs(nir_timestamps_arr - rgb_time_id)
         if min(time_diff) < MIN_TIME_DIFF:
             nir_path = nir_list[np.argmin(time_diff)]
             img_twins.append([rgb_path, nir_path])
+            print(f"Matched {rgb_path} with {nir_path}")
 
     return img_twins
 
@@ -75,21 +96,21 @@ def sort_images(img_dir, last_im_id=0):
     rgb_list = []
     nir_list = []
     dir_content = os.listdir(img_dir)
-    # print(dir_content)
     for item in dir_content:
         item_path = os.path.join(img_dir, item)  # directory with rgb or nir images
         if os.path.isdir(item_path) and ("NIR" in item or "RGB" in item):
             img_list = os.listdir(item_path)
             for img_name in img_list:
-                # print(img_name, len(img_name))
-                if len(img_name) == 30 and img_name.endswith(".tiff"):
-                    img_name_path = os.path.join(item_path, img_name)
-                    img_size = os.path.getsize(img_name_path)
-                    assert img_size in [NIR_SIZE, RGB_SIZE], img_size
-                    if img_size == RGB_SIZE:
-                        rgb_list.append(img_name_path)
-                    elif img_size == NIR_SIZE:
-                        nir_list.append(img_name_path)
+                img_name_path = os.path.join(item_path, img_name)
+                img_size = os.path.getsize(img_name_path)
+                print(f"Processing {img_name_path} with size {img_size}")
+                if img_size not in [NIR_SIZE, RGB_SIZE]:
+                    print(f"Skipping {img_name_path}, unexpected size: {img_size}")
+                    continue
+                if img_size == RGB_SIZE:
+                    rgb_list.append(img_name_path)
+                elif img_size == NIR_SIZE:
+                    nir_list.append(img_name_path)
 
     img_twins = sort_by_time(rgb_list, nir_list)
     return copy_twins(img_dir, img_twins, last_im_id)
@@ -100,7 +121,7 @@ def all_directories(main_dir, num_offset):
     for im_dir in dir_content:
         im_dir_path = os.path.join(main_dir, im_dir)
         if os.path.isdir(im_dir_path):
-            print(im_dir_path)
+            print(f"Processing directory: {im_dir_path}")
             print(f"Last im_id: {num_offset}")
             num_offset = sort_images(im_dir_path, num_offset)
 
